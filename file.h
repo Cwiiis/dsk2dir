@@ -38,7 +38,7 @@ enum FAMODEFLAGS {
     FA_OPEN_APPEND = 64
 };
 
-typedef FILE FIL;
+typedef FILE* FIL;
 typedef char TCHAR;
 typedef uint8_t BYTE;
 typedef uint16_t WORD;
@@ -64,6 +64,7 @@ typedef struct {
 FRESULT f_open(FIL*, const TCHAR* path, BYTE mode);
 FRESULT f_close(FIL*);
 FRESULT f_read(FIL*, void* buff, UINT btr, UINT* br);
+FRESULT f_lseek(FIL*, FSIZE_T);
 FRESULT f_write(FIL*, const void* buff, UINT btw, UINT* bw);
 FRESULT f_opendir(DIR*, const TCHAR* path);
 FRESULT f_closedir(DIR*);

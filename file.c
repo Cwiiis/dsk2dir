@@ -50,7 +50,7 @@ FRESULT f_open(FIL* fd, const TCHAR* path, BYTE mode)
     if (!mode_string || mode)
         return FR_INVALID_PARAMETER;
 
-    if ((fd = fopen(path, mode_string)))
+    if ((*fd = fopen(path, mode_string)))
         return FR_OK;
 
     // FIXME: Handle a few more of these cases
@@ -75,7 +75,7 @@ FRESULT f_open(FIL* fd, const TCHAR* path, BYTE mode)
 
 FRESULT f_close(FIL* fd)
 {
-    if (fclose(fd) == 0)
+    if (fclose(*fd) == 0)
         return FR_OK;
     switch(errno) {
     case EBADF:
@@ -89,8 +89,8 @@ FRESULT f_close(FIL* fd)
 
 FRESULT f_read(FIL* fd, void* buff, UINT btr, UINT* br)
 {
-    size_t ret = fread(buff, 1, btr, fd);
-    if (ret == btr || feof(fd)) {
+    size_t ret = fread(buff, 1, btr, *fd);
+    if (ret == btr || feof(*fd)) {
         *br = ret;
         return FR_OK;
     }
@@ -99,9 +99,22 @@ FRESULT f_read(FIL* fd, void* buff, UINT btr, UINT* br)
     return FR_DISK_ERR;
 }
 
+FRESULT f_lseek(FIL* fd, FSIZE_T offset)
+{
+    if (fseek(*fd, offset, SEEK_SET) == 0)
+        return FR_OK;
+    switch(errno) {
+    case EINVAL:
+        return FR_INVALID_OBJECT;
+    default:
+    case ESPIPE:
+        return FR_INT_ERR;
+    }
+}
+
 FRESULT f_write(FIL* fd, const void* buff, UINT btw, UINT* bw)
 {
-    size_t ret = fwrite(buff, 1, btw, fd);
+    size_t ret = fwrite(buff, 1, btw, *fd);
     if (ret == btw) {
         *bw = ret;
         return FR_OK;

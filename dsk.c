@@ -194,15 +194,10 @@ int dsk2dir(const TCHAR* path)
         if (buffer[0] == '\0') continue;
         debug_print("Filename: %s", buffer);
         debug_print("Attributes: %hu", attr);
-        // Read record number
-        read_and_validate(fd, buffer, br, 3);
-        debug_print("Record no.: %u", ((unsigned)buffer[0] << 16) | ((unsigned)buffer[1] << 8) | buffer[2]);
-        // Read extent
-        read_and_validate(fd, buffer, br, 1);
-        debug_print("Extent: %hhu", buffer[0]);
-        // Read block numbers
-        // Note, for disks < 256k, these are 8-bit, for >= 256k, 16-bit
-        read_and_validate(fd, buffer, br, 16);
+        // Read extent and record number
+        read_and_validate(fd, buffer, br, 4);
+        debug_print("Extent: %u", ((unsigned)buffer[2] << 5) | (buffer[0] & 0x1F));
+        debug_print("Record count: %hhu", buffer[3]);
 
         // Start writing out file
     }

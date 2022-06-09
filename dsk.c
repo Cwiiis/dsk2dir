@@ -66,6 +66,50 @@ static inline FSIZE_T get_track_adr(BYTE* track_offsets, BYTE is_extended, BYTE 
     return 0x100 + (((FSIZE_T)track_offsets[0] << 8) | track_offsets[1]) * track;
 }
 
+static int read_filename(FIL* fd, BYTE* buffer, WORD* attr)
+{
+    UINT br, i;
+
+    // Read name
+    if (f_read(fd, buffer, 8, &br) != FR_OK || br < 8) return DSK_FILE_ERROR;
+
+    // Separate out file attributes
+    *attr = 0;
+    for (i = 0; i < 8; ++i) {
+        *attr |= ((buffer[i] & 0x80) >> 7) << (10 - i);
+        buffer[i] &= 0x7F;
+    }
+    BYTE name_len;
+    for (name_len = 8; name_len > 0 && (buffer[name_len - 1] == 0x20 || buffer[name_len - 1] == '\0'); --name_len);
+
+    // Return early if name is null
+    if (name_len == 0) {
+        buffer[0] = '\0';
+        return DSK_OK;
+    }
+
+    // Read extension
+    if (f_read(fd, &buffer[name_len + 1], 3, &br) != FR_OK || br < 3) return DSK_FILE_ERROR;
+
+    // Separate out file attributes
+    for (i = name_len + 1; i < name_len + 1 + 3; ++i) {
+        *attr |= ((buffer[i] & 0x80) >> 7) << (name_len + 3 - i);
+        buffer[i] &= 0x7F;
+    }
+
+    BYTE ext_len;
+    for (ext_len = 3; ext_len > 0 && (buffer[name_len + ext_len] == 0x20 || buffer[name_len + ext_len] == '\0'); --ext_len);
+
+    // Terminate string
+    if (ext_len) {
+        buffer[name_len] = '.';
+        buffer[name_len + ext_len + 1] = '\0';
+    } else
+        buffer[name_len] = '\0';
+
+    return DSK_OK;
+}
+
 int dsk2dir(const TCHAR* path)
 {
 #define read_and_validate(fd, buf, br, size) \
@@ -128,44 +172,39 @@ int dsk2dir(const TCHAR* path)
     }
     BYTE is_system = (buffer[0] == 0x41);
 
-    // Skip past reserved system tracks
-    BYTE track = is_system ? 2 : 0;
+    // Read directory listing
+    BYTE dir_track = is_system ? 2 : 0;
+    for (unsigned i = 0; i < 64; ++i) {
+        FSIZE_T track_adr = get_track_adr(track_offsets, is_extended, tracks, dir_track);
 
-    for (; track < tracks; ++track) {
-        FSIZE_T track_adr = get_track_adr(track_offsets, is_extended, tracks, track);
-        debug_print("Reading track %hhu at address %lx", track, track_adr);
+        // Verify track header is correct
         f_lseek(&fd, track_adr);
+        if ((retval = verify_track(&fd, buffer, dir_track)) != DSK_OK) goto dsk2dirend;
 
-        if ((retval = verify_track(&fd, buffer, track)) != DSK_OK) goto dsk2dirend;
+        // Skip to directory entry (past gap length, filler byte and sector info)
+        f_lseek(&fd, track_adr + 0x100 + (i * 32));
 
-        // Skip to first sector (past gap length, filler byte and sector info)
-        f_lseek(&fd, track_adr + 0x100);
+        // Check user
+        read_and_validate(fd, buffer, br, 1);
+        if (buffer[0] != 0) continue;
 
-        // Iterate over directory listing
-        // FIXME: Is there a limit to the number of entries that we should validate...?
-        BYTE entry = 0;
-        do {
-            f_lseek(&fd, track_adr + 0x100 + ((FSIZE_T)entry) * 32);
-            read_and_validate(fd, buffer, br, 1);
-            if (buffer[0] == 0) {
-                // Read filename
-                read_and_validate(fd, buffer, br, 11);
-                debug_print("Filename: %.8s.%.3s", buffer, &buffer[8]);
-                // Read record number
-                read_and_validate(fd, buffer, br, 3);
-                debug_print("Record no.: %u", ((unsigned)buffer[0] << 16) | ((unsigned)buffer[1] << 8) | buffer[2]);
-                // Read extent
-                read_and_validate(fd, buffer, br, 1);
-                debug_print("Extent: %hhu", buffer[0]);
-                // Read block numbers
-                // Note, for disks < 256k, these are 8-bit, for >= 256k, 16-bit
-                read_and_validate(fd, buffer, br, 16);
+        // Read filename and attributes
+        WORD attr;
+        if ((retval = read_filename(&fd, buffer, &attr)) != DSK_OK) goto dsk2dirend;
+        if (buffer[0] == '\0') continue;
+        debug_print("Filename: %s", buffer);
+        debug_print("Attributes: %hu", attr);
+        // Read record number
+        read_and_validate(fd, buffer, br, 3);
+        debug_print("Record no.: %u", ((unsigned)buffer[0] << 16) | ((unsigned)buffer[1] << 8) | buffer[2]);
+        // Read extent
+        read_and_validate(fd, buffer, br, 1);
+        debug_print("Extent: %hhu", buffer[0]);
+        // Read block numbers
+        // Note, for disks < 256k, these are 8-bit, for >= 256k, 16-bit
+        read_and_validate(fd, buffer, br, 16);
 
-                // Start writing out file
-            } else if (buffer[0] == 0xE5)
-                goto dsk2dirend;
-            ++entry;
-        } while(1);
+        // Start writing out file
     }
 
 dsk2dirend:

@@ -157,7 +157,7 @@ int dsk2dir(const TCHAR* path)
 
     unsigned i;
     int retval = DSK_OK;
-    BYTE buffer[16];
+    BYTE buffer[12];
 
     FIL fd;
     if (f_open(&fd, path, FA_READ) != FR_OK)

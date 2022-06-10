@@ -31,6 +31,9 @@ int main(int argc, char** argv)
     case DSK_UNEXPECTED_SIDE :
         fprintf(stderr, "DSK_UNEXPECTED_SIDE\n");
         break;
+    case DSK_UNEXPECTED_SECTOR_ID :
+        fprintf(stderr, "DSK_UNEXPECTED_SECTOR_ID\n");
+        break;
     case DSK_UNEXPECTED_SECTOR_SIZE :
         fprintf(stderr, "DSK_UNEXPECTED_SECTOR_SIZE\n");
         break;

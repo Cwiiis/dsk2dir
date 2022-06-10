@@ -51,11 +51,8 @@ static inline void get_block_indices(BYTE is_system, unsigned block, BYTE* track
     if (is_system) *track += 2;
 }
 
-static inline FSIZE_T get_track_adr(BYTE* track_offsets, BYTE is_extended, BYTE tracks, BYTE track)
+static inline FSIZE_T get_track_adr(BYTE* track_offsets, BYTE is_extended, BYTE track)
 {
-    if (track >= tracks)
-        return 0;
-
     if (is_extended) {
         FSIZE_T adr = 0x100;
         for (unsigned i = 0; i < track; ++i)
@@ -64,6 +61,37 @@ static inline FSIZE_T get_track_adr(BYTE* track_offsets, BYTE is_extended, BYTE 
     }
 
     return 0x100 + (((FSIZE_T)track_offsets[0] << 8) | track_offsets[1]) * track;
+}
+
+static inline int get_sector_adr(FIL* fd, BYTE* buffer, BYTE* track_offsets, BYTE is_extended, BYTE is_system, BYTE track, BYTE sector, FSIZE_T* adr)
+{
+    int dsk_error;
+    UINT br;
+
+    *adr = get_track_adr(track_offsets, is_extended, track);
+
+    // Verify track header is correct
+    if (f_lseek(fd, *adr) != FR_OK) return DSK_FILE_ERROR;
+    if ((dsk_error = verify_track(fd, buffer, track)) != DSK_OK) return dsk_error;
+
+    for (unsigned i = 0; i < 9; ++i) {
+        if (f_lseek(fd, (*adr) + 0x1A + (8 * i)) != FR_OK) return DSK_FILE_ERROR;
+        BYTE sector_id;
+        if (f_read(fd, &sector_id, 1, &br) != FR_OK || br < 1) return DSK_FILE_ERROR;
+        sector_id -= (is_system ? 0x41 : 0xC1);
+
+        // Validate sector ID
+        if (sector_id >= 9) return DSK_UNEXPECTED_SECTOR_ID;
+
+        // Validate sector size
+        BYTE sector_size;
+        if (f_read(fd, &sector_size, 1, &br) != FR_OK || br < 1 || sector_size != 2) return DSK_UNEXPECTED_SECTOR_SIZE;
+
+        buffer[sector_id] = i;
+    }
+
+    *adr += 0x100 + (buffer[sector] * 512);
+    return DSK_OK;
 }
 
 static int read_filename(FIL* fd, BYTE* buffer, WORD* attr)
@@ -116,6 +144,7 @@ int dsk2dir(const TCHAR* path)
   if(f_read(&(fd), (buf), (size), &(br)) != FR_OK || \
      (br) < (size)) { retval = DSK_FILE_ERROR; goto dsk2dirend; }
 
+    unsigned i;
     int retval = DSK_OK;
     BYTE buffer[16];
 
@@ -141,26 +170,26 @@ int dsk2dir(const TCHAR* path)
     f_lseek(&fd, 0x30);
 
     // Read in track/side info
-    BYTE tracks;
-    read_and_validate(fd, &tracks, br, 1);
+    BYTE n_tracks;
+    read_and_validate(fd, &n_tracks, br, 1);
 
     // TODO: Support multi-sided disks
     read_and_validate(fd, buffer, br, 1);
     if (buffer[0] != 1) {
-        debug_print("Unsupported number of tracks: %hhu", buffer[0]);
+        debug_print("Unsupported number of sides: %hhu", buffer[0]);
         retval = DSK_UNSUPPORTED_FORMAT;
         goto dsk2dirend;
     }
 
     // Read track offsets
     BYTE track_offsets[0x100 - 0x34];
-    if (is_extended && tracks >= ARRAY_LENGTH(track_offsets)) {
+    if (is_extended && n_tracks >= ARRAY_LENGTH(track_offsets)) {
         retval = DSK_TOO_LARGE;
         goto dsk2dirend;
     }
     if (is_extended)
         f_lseek(&fd, 0x34);
-    read_and_validate(fd, track_offsets, br, is_extended ? tracks : 2);
+    read_and_validate(fd, track_offsets, br, is_extended ? n_tracks : 2);
 
     // Check if this is a system or data disk by reading the first sector ID
     f_lseek(&fd, 0x11A);
@@ -174,15 +203,12 @@ int dsk2dir(const TCHAR* path)
 
     // Read directory listing
     BYTE dir_track = is_system ? 2 : 0;
-    for (unsigned i = 0; i < 64; ++i) {
-        FSIZE_T track_adr = get_track_adr(track_offsets, is_extended, tracks, dir_track);
-
-        // Verify track header is correct
-        f_lseek(&fd, track_adr);
-        if ((retval = verify_track(&fd, buffer, dir_track)) != DSK_OK) goto dsk2dirend;
+    for (i = 0; i < 64; ++i) {
+        FSIZE_T sector_adr;
+        if ((retval = get_sector_adr(&fd, buffer, track_offsets, is_extended, is_system, dir_track, i / 16, &sector_adr)) != DSK_OK) goto dsk2dirend;
 
         // Skip to directory entry (past gap length, filler byte and sector info)
-        f_lseek(&fd, track_adr + 0x100 + (i * 32));
+        f_lseek(&fd, sector_adr + ((i % 16) * 32));
 
         // Check user
         read_and_validate(fd, buffer, br, 1);

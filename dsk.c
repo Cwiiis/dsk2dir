@@ -14,6 +14,8 @@
 #endif
 
 #define ARRAY_LENGTH(array) (sizeof((array))/sizeof((array)[0]))
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define debug_print(fmt, ...) \
             do { if (DEBUG) fprintf(stderr, fmt "\n", __VA_ARGS__); } while (0)
 
@@ -138,6 +140,15 @@ static int read_filename(FIL* fd, BYTE* buffer, WORD* attr)
     return DSK_OK;
 }
 
+static inline void increment_sector(BYTE* track, BYTE* sector)
+{
+    if (*sector == 8) {
+        ++(*track);
+        *sector = 0;
+    } else
+        ++(*sector);
+}
+
 int dsk2dir(const TCHAR* path)
 {
 #define read_and_validate(fd, buf, br, size) \
@@ -150,7 +161,7 @@ int dsk2dir(const TCHAR* path)
 
     FIL fd;
     if (f_open(&fd, path, FA_READ) != FR_OK)
-        return -1;
+        return DSK_FILE_ERROR;
 
     // Read dsk type from header
     UINT br;
@@ -216,16 +227,66 @@ int dsk2dir(const TCHAR* path)
 
         // Read filename and attributes
         WORD attr;
-        if ((retval = read_filename(&fd, buffer, &attr)) != DSK_OK) goto dsk2dirend;
-        if (buffer[0] == '\0') continue;
-        debug_print("Filename: %s", buffer);
+        BYTE filename[13];
+        if ((retval = read_filename(&fd, filename, &attr)) != DSK_OK) goto dsk2dirend;
+        if (filename[0] == '\0') continue;
+        debug_print("Filename: %s", filename);
         debug_print("Attributes: %hu", attr);
-        // Read extent and record number
-        read_and_validate(fd, buffer, br, 4);
-        debug_print("Extent: %u", ((unsigned)buffer[2] << 5) | (buffer[0] & 0x1F));
-        debug_print("Record count: %hhu", buffer[3]);
 
-        // Start writing out file
+        // Read extent
+        read_and_validate(fd, buffer, br, 3);
+        WORD extent = ((WORD)buffer[2] << 5) | (buffer[0] & 0x1F);
+        debug_print("Extent: %u", extent);
+
+        // Read record count
+        BYTE record_count;
+        read_and_validate(fd, &record_count, br, 1);
+        debug_print("Record count: %hhu", record_count);
+
+        // Read block list
+        BYTE block_list[16];
+        read_and_validate(fd, block_list, br, 16);
+
+        FIL out_fd;
+        if (f_open(&out_fd, (TCHAR*)filename, (extent ? FA_OPEN_APPEND : FA_CREATE_ALWAYS) | FA_WRITE) != FR_OK)
+            return DSK_FILE_ERROR;
+
+        // Write out file data
+        for (unsigned j = 0; j < 16 && block_list[j] && record_count && retval == DSK_OK; ++j) {
+            BYTE data[512];
+            BYTE data_track = (block_list[j] * 2) / 9;
+            BYTE data_sector = (block_list[j] * 2) % 9;
+
+            debug_print("Data block %hhx starts at track %hhu, sector %hhu", block_list[j], data_track, data_sector);
+
+            // Read and write block to disk (and respect record count)
+            for (unsigned k = 0; k < 2 && record_count; ++k) {
+                // Get sector address
+                if ((retval = get_sector_adr(&fd, buffer, track_offsets, is_extended, is_system, data_track, data_sector, &sector_adr)) != DSK_OK) break;
+                debug_print("Data at %.5lx", sector_adr);
+
+                // Read sector
+                f_lseek(&fd, sector_adr);
+                if (f_read(&fd, data, 512, &br) != FR_OK || br < 512) {
+                    retval = DSK_FILE_ERROR;
+                    break;
+                }
+
+                // Write sector to file
+                UINT btw = MIN(512, record_count * 128);
+                record_count = (record_count > 4) ? record_count - 4 : 0;
+                if (f_write(&out_fd, data, btw, &br) != FR_OK || br < btw) {
+                    retval = DSK_FILE_ERROR;
+                    break;
+                }
+
+                increment_sector(&data_track, &data_sector);
+            }
+        }
+
+        f_close(&out_fd);
+        if (retval != DSK_OK)
+            goto dsk2dirend;
     }
 
 dsk2dirend:

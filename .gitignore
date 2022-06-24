@@ -1,1 +1,4 @@
 *.swp
+/vsc2022/.vs
+/vsc2022/bin
+/vsc2022/obj

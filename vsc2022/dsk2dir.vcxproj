@@ -83,6 +83,9 @@
     <ClInclude Include="..\dsk.h" />
     <ClInclude Include="..\file.h" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\HD20_Image2022-08-23_18-04-20" />
+  </ItemGroup>
   <ItemDefinitionGroup />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

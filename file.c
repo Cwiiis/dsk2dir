@@ -1,4 +1,6 @@
 
+#define _DEFAULT_SOURCE
+
 #include "file.h"
 #include <errno.h>
 #include <fcntl.h>

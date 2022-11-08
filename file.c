@@ -4,6 +4,7 @@
 #include "file.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <features.h>
 #include <libgen.h>
 #include <string.h>
 #include <sys/param.h>
@@ -23,28 +24,36 @@ FRESULT f_open(FIL* fd, const TCHAR* path, BYTE mode)
             mode &= ~FA_WRITE;
             if (mode & FA_CREATE_ALWAYS) {
                 mode &= ~FA_CREATE_ALWAYS;
-                mode_string = "w+";
+                mode_string = "w+b";
             } else if (mode & FA_OPEN_APPEND) {
                 mode &= ~FA_OPEN_APPEND;
-                mode_string = "a+";
+                mode_string = "a+b";
             } else if (mode & FA_CREATE_NEW) {
                 mode &= ~FA_CREATE_NEW;
+#ifdef __GLIBC__
                 mode_string = "w+x";
+#else
+                mode_string = "w+b";
+#endif
             } else
-                mode_string = "r+";
+                mode_string = "r+b";
         } else
-            mode_string = "r";
+            mode_string = "rb";
     } else if (mode & FA_WRITE) {
         mode &= ~FA_WRITE;
         if (mode & FA_CREATE_ALWAYS) {
             mode &= ~FA_CREATE_ALWAYS;
-            mode_string = "w";
+            mode_string = "wb";
         } else if (mode & FA_OPEN_APPEND) {
             mode &= ~FA_OPEN_APPEND;
-            mode_string = "a";
+            mode_string = "ab";
         } else if (mode & FA_CREATE_NEW) {
             mode &= ~FA_CREATE_NEW;
+#ifdef __GLIBC__
             mode_string = "wx";
+#else
+            mode_string = "wb";
+#endif
         }
         // FIXME: Docs imply you can't use write flag alone, verify.
     }
